@@ -1,0 +1,9 @@
+{
+    "best_params": {
+        "algorithm": "SAMME",
+        "base_estimator__max_depth": 4,
+        "learning_rate": 0.35394317739254927,
+        "n_estimators": 231
+    },
+    "best_score": 0.7605621211677761
+}

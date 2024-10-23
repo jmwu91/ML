@@ -1,0 +1,5 @@
+{
+    "n_estimators": 300,
+    "random_state": 20231123,
+    "n_jobs": 12
+}

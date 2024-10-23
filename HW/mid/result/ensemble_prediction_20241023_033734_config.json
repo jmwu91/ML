@@ -1,0 +1,18 @@
+{
+    "threshold": 0.5,
+    "weights": {
+        "lgb": 0.25,
+        "rf": 0.2,
+        "xgb": 0.2,
+        "ada": 0.15,
+        "gb": 0.2
+    },
+    "prediction_time": "2024-10-23 03:37:35",
+    "model_count": 5,
+    "stats": {
+        "total_samples": 2100,
+        "fraud_predictions": 602,
+        "normal_predictions": 1498,
+        "fraud_ratio": 0.2866666666666667
+    }
+}

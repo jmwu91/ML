@@ -1,0 +1,12 @@
+{
+    "best_params": {
+        "learning_rate": 0.029323316752587696,
+        "max_depth": 6,
+        "max_features": null,
+        "min_samples_leaf": 8,
+        "min_samples_split": 13,
+        "n_estimators": 459,
+        "subsample": 0.7067022540359671
+    },
+    "best_score": 0.7773341448738653
+}

@@ -7,18 +7,22 @@ from datetime import datetime
 import lightgbm as lgb
 import xgboost as xgb
 from scipy.stats import uniform, randint
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import (
+    RandomForestClassifier,
+    AdaBoostClassifier,
+    GradientBoostingClassifier
+)
 from sklearn.model_selection import RandomizedSearchCV
+from sklearn.tree import DecisionTreeClassifier
 
 # Set data paths
-current_dir = os.getcwd()  # More reliable than using __name__
+current_dir = os.getcwd()
 data_dir = os.path.join(current_dir, "training_data")
 model_dir = os.path.join(current_dir, "models")
 
 # Create model directory if not exists
-os.makedirs(model_dir, exist_ok = True)
+os.makedirs(model_dir, exist_ok=True)
 
-# Load training & test data
 def load_data():
     """
     Load and prepare training and test datasets
@@ -46,11 +50,9 @@ def train_lightgbm(X_train, X_test, y_train, y_test, timestamp):
     """
     Train and save LightGBM model
     """
-    # Prepare datasets
     lgb_train = lgb.Dataset(X_train, label=y_train)
     lgb_eval = lgb.Dataset(X_test, label=y_test, reference=lgb_train)
     
-    # Set parameters
     params = {
         'objective': 'binary',
         'metric': 'binary_logloss',
@@ -63,13 +65,11 @@ def train_lightgbm(X_train, X_test, y_train, y_test, timestamp):
         'max_depth': 10
     }
     
-    # Train model
     num_round = 3000
     model = lgb.train(params, lgb_train, num_round,
                      valid_sets=[lgb_train, lgb_eval],
                      callbacks=[lgb.early_stopping(stopping_rounds=200)])
     
-    # Save model
     model_path = os.path.join(model_dir, f'lightgbm_model_{timestamp}.txt')
     model.save_model(model_path)
     print("LightGBM model saved:", model_path)
@@ -79,7 +79,6 @@ def train_random_forest(X_train, y_train, timestamp):
     """
     Train and save Random Forest model
     """
-    # Initialize and train model
     rf_model = RandomForestClassifier(
         n_estimators=300,
         random_state=20231123,
@@ -87,24 +86,20 @@ def train_random_forest(X_train, y_train, timestamp):
     )
     rf_model.fit(X_train, y_train)
     
-    # Get feature importance
     feature_importance = pd.DataFrame({
         'feature': X_train.columns,
         'importance': rf_model.feature_importances_
     }).sort_values('importance', ascending=False)
     
-    # Save model
     model_path = os.path.join(model_dir, f'random_forest_model_{timestamp}.pkl')
     with open(model_path, 'wb') as f:
         pickle.dump(rf_model, f)
         
-    # Save feature importance
     feature_importance.to_csv(
         os.path.join(model_dir, f'rf_feature_importance_{timestamp}.csv'),
         index=False
     )
     
-    # Save model parameters
     params = {
         'n_estimators': rf_model.n_estimators,
         'random_state': rf_model.random_state,
@@ -120,7 +115,6 @@ def train_xgboost(X_train, X_test, y_train, y_test, timestamp):
     """
     Train and save XGBoost model using RandomizedSearchCV
     """
-    # Define parameter distribution for random search
     param_dist = {
         'learning_rate': uniform(0.01, 0.19),
         'n_estimators': randint(300, 1000),
@@ -134,7 +128,6 @@ def train_xgboost(X_train, X_test, y_train, y_test, timestamp):
         'scale_pos_weight': uniform(1, 5)
     }
     
-    # Initialize base model
     xgb_model = xgb.XGBClassifier(
         objective='binary:logistic',
         n_jobs=12,
@@ -143,7 +136,6 @@ def train_xgboost(X_train, X_test, y_train, y_test, timestamp):
         tree_method='hist'
     )
     
-    # Perform random search
     random_search = RandomizedSearchCV(
         xgb_model,
         param_distributions=param_dist,
@@ -155,7 +147,6 @@ def train_xgboost(X_train, X_test, y_train, y_test, timestamp):
         scoring='f1'
     )
     
-    # Fit model
     random_search.fit(
         X_train, y_train,
         eval_set=[(X_test, y_test)],
@@ -166,14 +157,12 @@ def train_xgboost(X_train, X_test, y_train, y_test, timestamp):
     
     best_model = random_search.best_estimator_
     
-    # Save model files
     model_path = os.path.join(model_dir, f'xgb_random_search_model_{timestamp}.pkl')
     with open(model_path, 'wb') as f:
         pickle.dump(best_model, f)
     
     best_model.save_model(os.path.join(model_dir, f'xgb_random_search_model_{timestamp}.json'))
     
-    # Save search results
     with open(os.path.join(model_dir, f'xgb_random_search_results_{timestamp}.json'), 'w') as f:
         json.dump({
             'best_params': random_search.best_params_,
@@ -181,6 +170,120 @@ def train_xgboost(X_train, X_test, y_train, y_test, timestamp):
         }, f, indent=4)
     
     print("XGBoost model and search results saved")
+    return best_model
+
+def train_adaboost(X_train, y_train, timestamp):
+    """
+    Train and save AdaBoost model using RandomizedSearchCV
+    """
+    # Define base estimator
+    base_estimator = DecisionTreeClassifier(max_depth=3)
+    
+    # Define parameter distribution for random search
+    param_dist = {
+        'n_estimators': randint(50, 300),
+        'learning_rate': uniform(0.01, 0.99),
+        'algorithm': ['SAMME', 'SAMME.R'],
+        'base_estimator__max_depth': randint(2, 6)
+    }
+    
+    # Initialize AdaBoost classifier
+    ada_model = AdaBoostClassifier(
+        base_estimator=base_estimator,
+        random_state=20231123
+    )
+    
+    # Perform random search
+    random_search = RandomizedSearchCV(
+        ada_model,
+        param_distributions=param_dist,
+        n_iter=50,
+        cv=5,
+        verbose=1,
+        n_jobs=-1,
+        random_state=20231123,
+        scoring='f1'
+    )
+    
+    # Fit model
+    random_search.fit(X_train, y_train)
+    best_model = random_search.best_estimator_
+    
+    # Save model
+    model_path = os.path.join(model_dir, f'adaboost_model_{timestamp}.pkl')
+    with open(model_path, 'wb') as f:
+        pickle.dump(best_model, f)
+    
+    # Save search results
+    with open(os.path.join(model_dir, f'adaboost_search_results_{timestamp}.json'), 'w') as f:
+        json.dump({
+            'best_params': random_search.best_params_,
+            'best_score': random_search.best_score_
+        }, f, indent=4)
+    
+    print("AdaBoost model and search results saved")
+    return best_model
+
+def train_gradient_boosting(X_train, y_train, timestamp):
+    """
+    Train and save Gradient Boosting model using RandomizedSearchCV
+    """
+    # Define parameter distribution for random search
+    param_dist = {
+        'n_estimators': randint(100, 500),
+        'learning_rate': uniform(0.01, 0.19),
+        'max_depth': randint(3, 10),
+        'min_samples_split': randint(2, 20),
+        'min_samples_leaf': randint(1, 10),
+        'subsample': uniform(0.6, 0.4),
+        'max_features': ['sqrt', 'log2', None]
+    }
+    
+    # Initialize Gradient Boosting classifier
+    gb_model = GradientBoostingClassifier(
+        random_state=20231123
+    )
+    
+    # Perform random search
+    random_search = RandomizedSearchCV(
+        gb_model,
+        param_distributions=param_dist,
+        n_iter=50,
+        cv=5,
+        verbose=1,
+        n_jobs=-1,
+        random_state=20231123,
+        scoring='f1'
+    )
+    
+    # Fit model
+    random_search.fit(X_train, y_train)
+    best_model = random_search.best_estimator_
+    
+    # Save model
+    model_path = os.path.join(model_dir, f'gradient_boosting_model_{timestamp}.pkl')
+    with open(model_path, 'wb') as f:
+        pickle.dump(best_model, f)
+    
+    # Save feature importance
+    feature_importance = pd.DataFrame({
+        'feature': X_train.columns,
+        'importance': best_model.feature_importances_
+    }).sort_values('importance', ascending=False)
+    
+    feature_importance.to_csv(
+        os.path.join(model_dir, f'gb_feature_importance_{timestamp}.csv'),
+        index=False
+    )
+    
+    # Save search results
+    with open(os.path.join(model_dir, f'gradient_boosting_search_results_{timestamp}.json'), 'w') as f:
+        json.dump({
+            'best_params': random_search.best_params_,
+            'best_score': random_search.best_score_
+        }, f, indent=4)
+    
+    print("Gradient Boosting model and search results saved")
     return best_model
 
 def main():
@@ -205,10 +308,233 @@ def main():
     print("\nTraining XGBoost model...")
     xgb_model = train_xgboost(X_train, X_test, y_train, y_test, timestamp)
     
+    print("\nTraining AdaBoost model...")
+    ada_model = train_adaboost(X_train, y_train, timestamp)
+    
+    print("\nTraining Gradient Boosting model...")
+    gb_model = train_gradient_boosting(X_train, y_train, timestamp)
+    
     print(f"\nAll models have been trained and saved with timestamp: {timestamp}")
 
 if __name__ == "__main__":
     main()
+
+
+"""三個模型的"""
+# import os
+# import numpy as np
+# import pandas as pd
+# import pickle
+# import json
+# from datetime import datetime
+# import lightgbm as lgb
+# import xgboost as xgb
+# from scipy.stats import uniform, randint
+# from sklearn.ensemble import RandomForestClassifier
+# from sklearn.model_selection import RandomizedSearchCV
+
+# # Set data paths
+# current_dir = os.getcwd()  # More reliable than using __name__
+# data_dir = os.path.join(current_dir, "training_data")
+# model_dir = os.path.join(current_dir, "models")
+
+# # Create model directory if not exists
+# os.makedirs(model_dir, exist_ok = True)
+
+# # Load training & test data
+# def load_data():
+#     """
+#     Load and prepare training and test datasets
+#     Returns: X_train, X_test, y_train, y_test
+#     """
+#     X_train = pd.read_csv(os.path.join(data_dir, "X_train_clean.csv"))
+#     X_test = pd.read_csv(os.path.join(data_dir, "X_test_clean.csv"))
+#     y_train = pd.read_csv(os.path.join(data_dir, "y_train_clean.csv")).astype(int)
+#     y_test = pd.read_csv(os.path.join(data_dir, "y_test_clean.csv")).astype(int)
+#     return X_train, X_test, y_train, y_test
+
+# def clean_data(X):
+#     """
+#     Clean dataset by handling missing values
+#     Args:
+#         X: Input DataFrame
+#     Returns: Cleaned DataFrame
+#     """
+#     X = X.copy()
+#     X = X.fillna({'csmam': X['csmam'].mean()})
+#     X = X.fillna({'flg_3dsmk': X['flg_3dsmk'].ffill()})
+#     return X
+
+# def train_lightgbm(X_train, X_test, y_train, y_test, timestamp):
+#     """
+#     Train and save LightGBM model
+#     """
+#     # Prepare datasets
+#     lgb_train = lgb.Dataset(X_train, label=y_train)
+#     lgb_eval = lgb.Dataset(X_test, label=y_test, reference=lgb_train)
+    
+#     # Set parameters
+#     params = {
+#         'objective': 'binary',
+#         'metric': 'binary_logloss',
+#         'boosting_type': 'gbdt',
+#         'num_leaves': 31,
+#         'learning_rate': 0.05,
+#         'feature_fraction': 0.9,
+#         'bagging_fraction': 0.8,
+#         'bagging_freq': 5,
+#         'max_depth': 10
+#     }
+    
+#     # Train model
+#     num_round = 3000
+#     model = lgb.train(params, lgb_train, num_round,
+#                      valid_sets=[lgb_train, lgb_eval],
+#                      callbacks=[lgb.early_stopping(stopping_rounds=200)])
+    
+#     # Save model
+#     model_path = os.path.join(model_dir, f'lightgbm_model_{timestamp}.txt')
+#     model.save_model(model_path)
+#     print("LightGBM model saved:", model_path)
+#     return model
+
+# def train_random_forest(X_train, y_train, timestamp):
+#     """
+#     Train and save Random Forest model
+#     """
+#     # Initialize and train model
+#     rf_model = RandomForestClassifier(
+#         n_estimators=300,
+#         random_state=20231123,
+#         n_jobs=12
+#     )
+#     rf_model.fit(X_train, y_train)
+    
+#     # Get feature importance
+#     feature_importance = pd.DataFrame({
+#         'feature': X_train.columns,
+#         'importance': rf_model.feature_importances_
+#     }).sort_values('importance', ascending=False)
+    
+#     # Save model
+#     model_path = os.path.join(model_dir, f'random_forest_model_{timestamp}.pkl')
+#     with open(model_path, 'wb') as f:
+#         pickle.dump(rf_model, f)
+        
+#     # Save feature importance
+#     feature_importance.to_csv(
+#         os.path.join(model_dir, f'rf_feature_importance_{timestamp}.csv'),
+#         index=False
+#     )
+    
+#     # Save model parameters
+#     params = {
+#         'n_estimators': rf_model.n_estimators,
+#         'random_state': rf_model.random_state,
+#         'n_jobs': rf_model.n_jobs
+#     }
+#     with open(os.path.join(model_dir, f'rf_model_params_{timestamp}.json'), 'w') as f:
+#         json.dump(params, f, indent=4)
+        
+#     print("Random Forest model and related files saved")
+#     return rf_model
+
+# def train_xgboost(X_train, X_test, y_train, y_test, timestamp):
+#     """
+#     Train and save XGBoost model using RandomizedSearchCV
+#     """
+#     # Define parameter distribution for random search
+#     param_dist = {
+#         'learning_rate': uniform(0.01, 0.19),
+#         'n_estimators': randint(300, 1000),
+#         'max_depth': randint(3, 10),
+#         'min_child_weight': randint(1, 10),
+#         'gamma': uniform(0, 0.5),
+#         'subsample': uniform(0.6, 0.4),
+#         'colsample_bytree': uniform(0.6, 0.4),
+#         'reg_alpha': uniform(0, 1),
+#         'reg_lambda': uniform(0, 1),
+#         'scale_pos_weight': uniform(1, 5)
+#     }
+    
+#     # Initialize base model
+#     xgb_model = xgb.XGBClassifier(
+#         objective='binary:logistic',
+#         n_jobs=12,
+#         seed=20231121,
+#         enable_categorical=True,
+#         tree_method='hist'
+#     )
+    
+#     # Perform random search
+#     random_search = RandomizedSearchCV(
+#         xgb_model,
+#         param_distributions=param_dist,
+#         n_iter=100,
+#         cv=5,
+#         verbose=1,
+#         n_jobs=-1,
+#         random_state=20231121,
+#         scoring='f1'
+#     )
+    
+#     # Fit model
+#     random_search.fit(
+#         X_train, y_train,
+#         eval_set=[(X_test, y_test)],
+#         early_stopping_rounds=50,
+#         eval_metric='auc',
+#         verbose=True
+#     )
+    
+#     best_model = random_search.best_estimator_
+    
+#     # Save model files
+#     model_path = os.path.join(model_dir, f'xgb_random_search_model_{timestamp}.pkl')
+#     with open(model_path, 'wb') as f:
+#         pickle.dump(best_model, f)
+    
+#     best_model.save_model(os.path.join(model_dir, f'xgb_random_search_model_{timestamp}.json'))
+    
+#     # Save search results
+#     with open(os.path.join(model_dir, f'xgb_random_search_results_{timestamp}.json'), 'w') as f:
+#         json.dump({
+#             'best_params': random_search.best_params_,
+#             'best_score': random_search.best_score_
+#         }, f, indent=4)
+    
+#     print("XGBoost model and search results saved")
+#     return best_model
+
+# def main():
+#     """
+#     Main execution function
+#     """
+#     # Generate timestamp for model versioning
+#     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+#     # Load and prepare data
+#     X_train, X_test, y_train, y_test = load_data()
+#     X_train = clean_data(X_train)
+#     X_test = clean_data(X_test)
+    
+#     # Train all models
+#     print("Training LightGBM model...")
+#     lgb_model = train_lightgbm(X_train, X_test, y_train, y_test, timestamp)
+    
+#     print("\nTraining Random Forest model...")
+#     rf_model = train_random_forest(X_train, y_train, timestamp)
+    
+#     print("\nTraining XGBoost model...")
+#     xgb_model = train_xgboost(X_train, X_test, y_train, y_test, timestamp)
+    
+#     print(f"\nAll models have been trained and saved with timestamp: {timestamp}")
+
+# if __name__ == "__main__":
+#     main()
+
+
+############################################################################
 
 
 
